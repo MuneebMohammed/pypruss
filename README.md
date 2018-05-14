@@ -1,2 +1,2 @@
-# pypruss
-PyPRUSS is an API/binding to control the PRUs on Beaglebone.
+# PyPRUSS
+The Repository for the Google Summer of Code 2018 project under BeagleBoard.org
