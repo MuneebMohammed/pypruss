@@ -40,11 +40,9 @@ def pru_reset(number):
     
 
 def exec_program(filepath, number):
-    with open(filepath, 'r') as f:
-        with open('/lib/firmware/am335x-pru'+str(number)+'-fw', 'w') as f1:
-            for line in f:
-                f1.write(line);
-    f.close();
-    f1.close();
-    pru_reset(number);
+    pru_disable(number)
+    if subprocess.call('cp '+filepath+' /lib/firmware/am335x-pru'+str(number)+'-fw', shell=True):
+        print("Error loading firmware")
+        return
+    pru_enable(number)
 
