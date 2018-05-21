@@ -1,6 +1,9 @@
 import os
 import subprocess
+import io
+import select
 
+# Remoteproc functions
 def modprobe():
     ret = subprocess.call("modprobe pru_rproc", shell=True)
     if ret > 0:
@@ -14,7 +17,7 @@ def modunprobe():
 def pru_enable(number):
     try:
         if number == 0 or number == 1:
-            with open('/sys/class/remoteproc/remoteproc'+str(number+1)+'/state', 'w+') as fd:
+            with open('/sys/class/remoteproc/remoteproc'+str(number+1)+'/state', 'w') as fd:
                 fd.write('start')
             fd.close()
             return 
@@ -27,7 +30,7 @@ def pru_enable(number):
 
 def pru_disable(number):
     try:
-        with open('/sys/class/remoteproc/remoteproc'+str(number+1)+'/state', 'w+') as fd:
+        with open('/sys/class/remoteproc/remoteproc'+str(number+1)+'/state', 'w') as fd:
             fd.write('stop')
         fd.close();
         return 
@@ -45,4 +48,35 @@ def exec_program(filepath, number):
         print("Error loading firmware")
         return
     pru_enable(number)
+
+# RPMsg functions
+def send_msg(message, channel):
+    devpath = '/dev/rpmsg_pru'+str(channel)
+    if os.path.exists(devpath):
+        with open(devpath, 'w') as fd:
+            fd.write(message+'\n');
+        fd.close()
+    else:
+        print("rpmsg channel not found!")
+
+def get_msg(channel):
+    devpath = '/dev/rpmsg_pru'+str(channel)
+    if os.path.exists(devpath):
+        with io.open(devpath, 'r') as fd:
+            return fd.readline().strip()
+        fd.close()
+    else:
+        print("rpmsg channel not found!")
+
+def wait_for_event(number, channel):
+    devpath = '/dev/rpmsg_pru'+str(channel)
+    if os.path.exists(devpath):
+        with open(devpath, 'r') as fd:
+            p = select.poll()
+            p.register(fd)
+            p.poll() 
+        fd.close()
+        
+    else:
+        print("rpmsg channel not found")
 
