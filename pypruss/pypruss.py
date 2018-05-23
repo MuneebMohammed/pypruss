@@ -60,8 +60,8 @@ def exec_program(filepath, number):
     pru_enable(number)
 
 # RPMsg functions
-def send_msg(message, channel):
-    devpath = '/dev/rpmsg_pru'+str(channel)
+def send_msg(message, channel="rpmsg_pru30"):
+    devpath = '/dev/'+str(channel)
     if os.path.exists(devpath):
         with open(devpath, 'w') as fd:
             fd.write(message+'\n');
@@ -69,8 +69,8 @@ def send_msg(message, channel):
     else:
         print("rpmsg channel not found!")
 
-def get_msg(channel):
-    devpath = '/dev/rpmsg_pru'+str(channel)
+def get_msg(channel="rpmsg_pru30"):
+    devpath = '/dev/'+str(channel)
     if os.path.exists(devpath):
         with io.open(devpath, 'r') as fd:
             return fd.readline().strip()
@@ -78,17 +78,15 @@ def get_msg(channel):
     else:
         print("rpmsg channel not found!")
 
-def wait_for_event(eventno):
+def wait_for_event(channel='rpmsg_pru30'):
     if eventno == 0 or eventno == 1:
-        devpath = '/dev/rpmsg_pru3'+str(eventno)
+        devpath = '/dev/'+channel
         if os.path.exists(devpath):
             with open(devpath, 'r') as fd:
                 p = select.poll()
                 p.register(fd)
                 p.poll() 
             fd.close()
-            return 1
-        
         else:
             print("rpmsg channel not found")
     else:
