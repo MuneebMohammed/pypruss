@@ -1,9 +1,16 @@
 import os
+import sys
 import subprocess
 import io
 import select
 import mmap
 import struct
+
+#State definitions
+PRU_OFFLINE = 0
+PRU_STOPPED = 1
+PRU_RUNNING = 2
+PRU_HALTED  = 3
 
 #Memory definitions
 PRU_ICSS     = 0x4A300000
@@ -11,126 +18,122 @@ PRU_ICSS_LEN = 512*1024
 PRU_DRAM0    = 0x00000000
 PRU_DRAM1    = 0x00002000
 PRU_SRAM     = 0x00010000
-MEMTYPES = [PRU_DRAM0, PRU_DRAM1, PRU_SRAM]
 
-# Remoteproc functions
-def modprobe():
-    ret = subprocess.call("modprobe pru_rproc", shell=True)
-    if ret > 0:
-        print("modprobe failed")
+class PRU(object):
 
-def modunprobe():
-    ret = subprocess.call("modprobe -r pru_rproc", shell=True)
-    if ret > 0:
-        print("modunprobe failed")
-
-def pru_enable(number):
-    try:
-        if number == 0 or number == 1:
-            with open('/sys/class/remoteproc/remoteproc'+str(number+1)+'/state', 'w') as fd:
-                fd.write('start')
-            fd.close()
-            return 
-        else:
-            print("Number can be 0 or 1 only")
-  
-    except OSError:
-         print("PRU already enabled!")
-         return 
-
-def pru_disable(number):
-    try:
-        with open('/sys/class/remoteproc/remoteproc'+str(number+1)+'/state', 'w') as fd:
-            fd.write('stop')
-        fd.close();
-        return 
-    except OSError:
-        return 
-
-def pru_reset(number):
-    pru_disable(number)
-    pru_enable(number)
+    def __init__(self, number=0, fw=None):
+        if number != 0 and number != 1:
+            sys.exit("Invalid PRU number (Can be 0 or 1 only)")
+        self.number = number
+        self.modprobe()
+        self.reset()
+        if fw is not None:
+            self.load(fw)
+		
+    @classmethod 
+    def modprobe(cls):
+        if subprocess.call("/sbin/modprobe pru_rproc", shell=True) :
+    	    sys.exit("Probing Remoteproc Driver Failed")
     
+    @classmethod
+    def modunprobe(cls):
+        if subprocess.call("/sbin/modprobe -r pru_rproc", shell=True) :
+            sys.exit("Failed removing the Remoteproc Driver")
 
-def exec_program(filepath, number):
-    pru_disable(number)
-    if subprocess.call('cp '+filepath+' /lib/firmware/am335x-pru'+str(number)+'-fw', shell=True):
-        print("Error loading firmware")
-        return
-    pru_enable(number)
+    def enable(self):
+        try:
+            with open('/sys/class/remoteproc/remoteproc'+str(self.number+1)+'/state', 'w') as fd:
+                fd.write('start')
+                fd.close()
+            self.state = PRU_RUNNING
+        except OSError:
+            pass 
 
-# RPMsg functions
-def send_msg(message, channel="rpmsg_pru30"):
-    devpath = '/dev/'+str(channel)
-    if os.path.exists(devpath):
-        with open(devpath, 'w') as fd:
-            fd.write(message+'\n');
-        fd.close()
-    else:
-        print("rpmsg channel not found!")
+    def disable(self):
+        try:
+            with open('/sys/class/remoteproc/remoteproc'+str(self.number+1)+'/state', 'w') as fd:
+                fd.write('stop')
+                fd.close();
+            self.state = PRU_STOPPED
+        except OSError:
+            pass
+	
+    def reset(self):
+        self.disable()
+        self.enable()
+    	
+    def load(self, filepath):
+        self.disable()
+        if subprocess.call('cp '+filepath+' /lib/firmware/am335x-pru'+str(self.number)+'-fw', shell=True):
+            print("Error loading firmware on PRU"+str(self.number))
+        self.enable()
 
-def get_msg(channel="rpmsg_pru30"):
-    devpath = '/dev/'+str(channel)
-    if os.path.exists(devpath):
-        with io.open(devpath, 'r') as fd:
-            return fd.readline().strip()
-        fd.close()
-    else:
-        print("rpmsg channel not found!")
+        # RPMsg functions
+    def send_msg(self, message, channel=None):
+        if channel is None:
+            channel = '3'+str(self.number)
+        devpath = '/dev/rpmsg_pru'+str(channel)
+        if os.path.exists(devpath):
+            with open(devpath, 'w') as fd:
+                fd.write(message+'\n');
+                fd.close()
+        else:
+            print("Error Sending Message on "+channel+": Channel not found")
 
-def wait_for_event(channel='rpmsg_pru30'):
-    if eventno == 0 or eventno == 1:
-        devpath = '/dev/'+channel
+    def get_msg(self, channel=None):
+        if channel is None:
+            channel = '3'+str(self.number)
+        devpath = '/dev/rpmsg_pru'+str(channel)
+        if os.path.exists(devpath):
+            with io.open(devpath, 'r') as fd:
+                data = fd.readline().strip()
+                fd.close()
+            return data
+        else:
+            print("Error Recieving Message from "+channel+": Channel not found")
+
+    def wait_for_event(self, channel=None):
+        if channel is None:
+            channel = '3'+str(self.number)
+        devpath = '/dev/rpmsg_pru'+str(channel)
         if os.path.exists(devpath):
             with open(devpath, 'r') as fd:
-                p = select.poll()
-                p.register(fd)
-                p.poll() 
-            fd.close()
+                fd.read(1);
+                fd.close()
         else:
-            print("rpmsg channel not found")
-    else:
-        print("event can be 0 or 1 only")
-
-#Memory functions
-def writeint_prumem(memtype, address, data):
-    if memtype < 0 or memtype > 2:
-        print("Invalid memtype(Can be 0, 1, 2 only)")
-        return
-    with open('/dev/mem', 'r+b') as fd:
-        pru_mem = mmap.mmap(fd.fileno(), PRU_ICSS_LEN, offset=PRU_ICSS)
-        pru_mem[MEMTYPES[memtype]+address: MEMTYPES[memtype]+address+4] = struct.pack('L', data)
-    pru_mem.close()
-    fd.close()
-
-def readint_prumem(memtype, address):
-    if memtype < 0 or memtype > 2:
-        print("Invalid memtype(Can be 0, 1, 2 only)")
-        return
-    with open('/dev/mem', 'r+b') as fd:
-        pru_mem = mmap.mmap(fd.fileno(), PRU_ICSS_LEN, offset=PRU_ICSS)
-        return struct.unpack('L', pru_mem[MEMTYPES[memtype]+address: MEMTYPES[memtype]+address+4])[0]
-    pru_mem.close()
-    fd.close()
-    
-def writebyte_prumem(memtype, address, data):
-    if memtype < 0 or memtype > 2:
-        print("Invalid memtype(Can be 0, 1, 2 only)")
-        return
-    with open('/dev/mem', 'r+b') as fd:
-        pru_mem = mmap.mmap(fd.fileno(), PRU_ICSS_LEN, offset=PRU_ICSS)
-        pru_mem[MEMTYPES[memtype]+address: MEMTYPES[memtype]+address+1] = struct.pack('B', data)
-    pru_mem.close()
-    fd.close()
-
-def readbyte_prumem(memtype, address):
-    if memtype < 0 or memtype > 2:
-        print("Invalid memtype(Can be 0, 1, 2 only)")
-        return
-    with open('/dev/mem', 'r+b') as fd:
-        pru_mem = mmap.mmap(fd.fileno(), PRU_ICSS_LEN, offset=PRU_ICSS)
-        return struct.unpack('B', pru_mem[MEMTYPES[memtype]+address: MEMTYPES[memtype]+address+1])[0]
-    pru_mem.close()
-    fd.close()
-                      
-
+            print("Error : Channel not found")
+            
+	#Memory functions
+    def mem_writeint(self, address, data, shared=False):
+        base = PRU_SRAM if shared else (PRU_DRAM1 if self.number else PRU_DRAM0)
+        with open('/dev/mem', 'r+b') as fd:
+            pru_mem = mmap.mmap(fd.fileno(), PRU_ICSS_LEN, offset=PRU_ICSS)
+            pru_mem[base+address: base+address+4] = struct.pack('L', data)
+            pru_mem.close()
+            fd.close()
+	
+    def mem_readint(self, address, shared=False):
+        base = PRU_SRAM if shared else (PRU_DRAM1 if self.number else PRU_DRAM0)
+        with open('/dev/mem', 'r+b') as fd:
+            pru_mem = mmap.mmap(fd.fileno(), PRU_ICSS_LEN, offset=PRU_ICSS)
+            data = struct.unpack('L', pru_mem[base+address: base+address+4])[0]
+            pru_mem.close()
+            fd.close()
+        return data
+    	
+    def mem_writebyte(self, address, data, shared=False):
+        base = PRU_SRAM if shared else (PRU_DRAM1 if self.number else PRU_DRAM0)
+        with open('/dev/mem', 'r+b') as fd:
+            pru_mem = mmap.mmap(fd.fileno(), PRU_ICSS_LEN, offset=PRU_ICSS)
+            pru_mem[base+address: base+address+1] = struct.pack('B', data)
+            pru_mem.close()
+            fd.close()
+	
+    def mem_readbyte(self, address, shared=False):
+        base = PRU_SRAM if shared else (PRU_DRAM1 if self.number else PRU_DRAM0)
+        with open('/dev/mem', 'r+b') as fd:
+            pru_mem = mmap.mmap(fd.fileno(), PRU_ICSS_LEN, offset=PRU_ICSS)
+            data = struct.unpack('B', pru_mem[base+address: base+address+1])[0]
+            pru_mem.close()
+            fd.close()
+        return data
