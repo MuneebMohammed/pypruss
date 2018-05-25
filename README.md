@@ -13,3 +13,8 @@ PyPRUSS is a binding for the PRUs on the Beaglebone. It provides a beginner frie
 The project consists of:
 * pypruss - The module/package
 * examples - These include the firmware examples along with python scripts using the bindings
+
+## Installing the package/module
+```
+python3 setup.py install
+```
